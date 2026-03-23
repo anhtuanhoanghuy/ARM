@@ -1,0 +1,493 @@
+🚀 PROJECT 1 — UART Command System (Bare-metal → RTOS)
+🎯 Mục tiêu chính
+
+Xây dựng một hệ thống:
+
+Nhận lệnh từ UART → xử lý → điều khiển LED + trả response
+
+📦 ĐỀ BÀI
+1. Input (UART)
+
+Thiết bị nhận command từ PC qua UART (115200):
+
+Ví dụ:
+
+LED ON\n
+LED OFF\n
+STATUS\n
+2. Output
+
+Thiết bị phải phản hồi lại:
+
+OK\n
+ERROR\n
+LED: ON\n
+LED: OFF\n
+3. Chức năng bắt buộc
+✅ 1. UART RX bằng interrupt
+Không polling
+Nhận từng byte
+✅ 2. Circular buffer
+Lưu data từ ISR
+Không mất byte
+Không overwrite sai
+✅ 3. Command parser
+Nhận chuỗi kết thúc bằng \n
+Parse command:
+Command	Action
+LED ON	bật LED
+LED OFF	tắt LED
+STATUS	trả trạng thái
+✅ 4. Main loop (bare-metal version)
+while(1)
+{
+    // check buffer
+    // parse command nếu đủ
+}
+⚙️ Yêu cầu kỹ thuật (QUAN TRỌNG)
+❗ 1. KHÔNG được làm trong ISR
+
+ISR chỉ được:
+
+nhận byte
+push vào buffer
+
+👉 Không được:
+
+parse string
+strcmp
+điều khiển LED
+❗ 2. Không dùng delay blocking
+HAL_Delay(...) ❌
+❗ 3. Buffer phải an toàn
+Có:
+head
+tail
+Không bị:
+overflow
+mất data
+🎯 Mức hoàn thành
+🟢 Pass (basic)
+Nhận được command
+LED hoạt động đúng
+🟡 Good
+Không mất data khi gửi nhanh
+Không crash khi input sai
+🔴 Strong (nên đạt)
+Handle:
+command sai
+buffer full
+Code clean:
+tách module (uart / buffer / app)
+🔥 Bonus (nếu muốn nâng level)
+1. Command không phân biệt hoa thường
+led on
+Led On
+2. Handle command dài bất kỳ
+3. Echo lại command
+🧠 Insight bạn sẽ học được
+
+Nếu làm đúng:
+
+👉 Bạn sẽ hiểu:
+
+ISR nên làm gì / không nên làm gì
+Buffer quan trọng thế nào
+Tại sao polling không đủ
+📌 Sau khi xong
+
+👉 Bạn sẽ:
+
+convert sang RTOS (bước tiếp theo)
+🎯 Checklist trước khi bạn bắt đầu
+ UART interrupt OK
+ Có ring buffer
+ Main loop đọc buffer
+ Parser tách command
+ LED control OK
+ UART TX response OK
+🚀 Nếu bạn muốn
+
+Khi bạn bắt đầu code, bạn có thể gửi:
+
+code ISR
+code buffer
+
+👉 mình sẽ review như code review trong công ty (rất đáng giá).
+
+oki
+
+Tốt 👍 bắt đầu đúng cách rồi.
+
+Để bạn không bị “đứng hình”, mình đưa cho bạn first step cực cụ thể (giống như kickoff trong công ty) — bạn chỉ cần làm đúng từng bước này.
+
+🚀 STEP 1 — Làm cho UART RX interrupt chạy được
+🎯 Mục tiêu:
+
+Nhận được 1 byte qua UART bằng interrupt và thấy nó hoạt động
+
+⚙️ 1. Khai báo biến
+
+Trong main.c:
+
+uint8_t rx_byte;
+⚙️ 2. Start nhận interrupt (TRƯỚC while(1))
+HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+⚙️ 3. Implement callback
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        // debug: echo lại byte nhận được
+        HAL_UART_Transmit(&huart1, &rx_byte, 1, 10);
+
+        // gọi lại để nhận tiếp
+        HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+    }
+}
+🎯 Kết quả bạn cần đạt
+
+Mở terminal (TeraTerm / PuTTY):
+
+👉 Gõ ký tự → thấy echo lại ngay
+
+❗ Nếu chưa chạy
+
+Check:
+
+NVIC đã enable USART interrupt chưa
+Baudrate đúng chưa (115200)
+Chọn đúng UART chưa (USART1 hay USART2)
+GPIO TX/RX đúng chân chưa
+🔥 STEP 2 — Thêm buffer (đừng làm parser vội)
+
+Sau khi Step 1 OK, bạn làm tiếp:
+
+⚙️ Tạo buffer đơn giản
+#define BUF_SIZE 128
+
+uint8_t buffer[BUF_SIZE];
+uint16_t head = 0;
+uint16_t tail = 0;
+⚙️ Sửa ISR
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        buffer[head++] = rx_byte;
+
+        if (head >= BUF_SIZE) head = 0;
+
+        HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+    }
+}
+🎯 Test:
+
+Trong while(1):
+
+if (tail != head)
+{
+    uint8_t data = buffer[tail++];
+    if (tail >= BUF_SIZE) tail = 0;
+
+    HAL_UART_Transmit(&huart1, &data, 1, 10);
+}
+
+👉 Bạn vẫn sẽ thấy echo → nhưng giờ qua buffer
+
+🚫 CHƯA được làm
+❌ parse command
+❌ strcmp
+❌ xử lý LED
+
+👉 Nếu làm vội → bạn sẽ fail ở bước sau
+
+🎯 Mục tiêu hôm nay
+
+Chỉ cần đạt:
+
+ UART interrupt OK
+ Buffer hoạt động
+ Không mất ký tự khi gõ nhanh
+🧠 Insight quan trọng
+
+Nếu bạn làm xong bước này:
+
+👉 Bạn đã hiểu:
+
+ISR chạy như thế nào
+Data flow từ interrupt → main loop
+🚀 Bước tiếp theo (khi bạn xong)
+
+Bạn nói:
+👉 “xong step 2”
+
+Mình sẽ hướng dẫn bạn:
+
+build command parser (chuẩn, không bug)
+tránh lỗi classic (buffer overflow, string lỗi)
+
+Cứ làm từng bước — đừng nhảy.
+Nếu có bug, gửi code mình debug cùng bạn luôn.
+
+nói rõ yêu cầu chi tiết của project 1 với bare-metal
+
+OK — mình sẽ viết lại Project 1 (bare-metal) theo kiểu spec kỹ thuật rõ ràng như trong công ty, để bạn không bị mơ hồ khi code.
+
+📘 PROJECT 1 — UART Command System (BARE-METAL)
+🎯 Mục tiêu hệ thống
+
+Xây dựng firmware:
+
+Nhận dữ liệu UART bằng interrupt → lưu buffer → parse command trong main loop → điều khiển LED + trả response
+
+🧱 1. Kiến trúc hệ thống (BẮT BUỘC)
+Data flow chuẩn:
+UART RX interrupt
+        ↓
+   Ring buffer
+        ↓
+   Main loop
+        ↓
+   Command parser
+        ↓
+   Action (LED + UART TX)
+⚙️ 2. Yêu cầu chức năng (Functional Requirements)
+2.1 UART RX
+Baudrate: 115200
+Mode: interrupt (KHÔNG polling)
+Nhận từng byte (size = 1)
+2.2 Ring Buffer
+Yêu cầu:
+Kích thước: ≥ 128 bytes
+Cấu trúc:
+head (write index)
+tail (read index)
+Phải đảm bảo:
+Không mất data khi input nhanh
+Không overwrite khi buffer đầy
+Có cơ chế:
+detect buffer full
+hoặc overwrite có kiểm soát (tuỳ bạn chọn)
+2.3 Main loop
+while (1)
+{
+    // đọc buffer
+    // build command string
+    // nếu gặp '\n' → parse
+}
+2.4 Command format
+Input:
+LED ON\n
+LED OFF\n
+STATUS\n
+Quy tắc:
+Command kết thúc bằng \n
+Max length: 32 bytes
+Không có \n → không parse
+2.5 Command xử lý
+Command	Action
+LED ON	bật LED
+LED OFF	tắt LED
+STATUS	trả trạng thái LED
+2.6 Output (UART TX)
+Tình huống	Response
+Command hợp lệ	OK\n
+Sai command	ERROR\n
+STATUS	LED: ON\n hoặc LED: OFF\n
+🔒 3. Yêu cầu kỹ thuật (NON-FUNCTIONAL)
+3.1 ISR (rất quan trọng)
+
+ISR chỉ được làm:
+
+đọc byte
+push vào buffer
+restart interrupt
+❌ ISR KHÔNG được:
+parse string
+strcmp
+điều khiển LED
+gọi hàm nặng
+3.2 Không blocking
+HAL_Delay(...) ❌
+while(wait...) ❌
+3.3 Thread safety (dù chưa có RTOS)
+head và tail dùng chung ISR + main
+Phải tránh:
+đọc/ghi sai index
+
+👉 Gợi ý:
+
+dùng volatile
+3.4 Memory safety
+Không dùng strcpy bừa bãi
+Không overflow command buffer
+🧠 4. Command parser (logic bắt buộc)
+Bạn phải tự build:
+Step:
+Lấy từng byte từ buffer
+Append vào command buffer
+Nếu gặp \n:
+terminate string (\0)
+parse command
+Ví dụ:
+
+Input stream:
+
+L E D   O N \n
+Sau khi build:
+"LED ON"
+⚠️ 5. Edge cases (bắt buộc handle)
+5.1 Command quá dài
+AAAAAAAAAAAA...(>32 bytes)
+
+👉 Phải:
+
+reset buffer
+tránh crash
+5.2 Command không hợp lệ
+HELLO\n
+
+👉 trả:
+
+ERROR\n
+5.3 Input liên tục
+LED ON\nLED OFF\nSTATUS\n
+
+👉 phải parse đúng từng command
+
+5.4 Missing newline
+LED ON
+
+👉 không parse
+
+🧪 6. Test cases (rất quan trọng)
+
+Bạn phải test:
+
+Case 1:
+LED ON\n
+
+→ LED bật
+
+Case 2:
+LED OFF\n
+Case 3:
+STATUS\n
+Case 4:
+abc\n
+
+→ ERROR
+
+Case 5:
+
+Gõ cực nhanh
+→ không mất ký tự
+
+📁 7. Code structure (bắt buộc tách module)
+Không viết hết vào main.c
+uart.c
+init
+ISR callback
+buffer.c
+push
+pop
+check full/empty
+app.c
+parser
+command handling
+🎯 8. Definition of Done (DONE khi đạt đủ)
+
+Bạn hoàn thành khi:
+
+ UART interrupt hoạt động
+ Buffer không mất data
+ Parse đúng command
+ LED control OK
+ Response đúng
+ Không crash khi input lỗi
+ Code tách module rõ ràng
+🧠 Insight quan trọng
+
+Nếu bạn làm đúng spec này:
+
+👉 Bạn đã đạt:
+
+level junior → gần mid firmware
+🚀 Sau project này
+
+Bạn sẽ:
+
+convert sang RTOS
+thêm queue
+thêm DMA
+
+1️⃣ Những kiến thức bạn đã học được
+a) UART trên STM32
+
+Hiểu luồng:
+
+ISR (HAL_UART_RxCpltCallback)
+    ↓
+Lưu buffer → set flag state_rx
+    ↓
+Main loop (while 1)
+    ↓
+process_command()
+b) Buffer & command parsing
+Sử dụng char array để lưu chuỗi nhận từ UART
+Thao tác với index i, reset khi \r (end-of-command)
+Overflow xử lý → set error_flag → bỏ command cho tới \r
+Cách so sánh command chính xác: strcmp(buffer, "ON") vs strncmp(buffer, "ON", 2)
+Reset trạng thái sau khi xử lý command: state_rx = 0, i = 0, error_flag = 0
+c) LED control GPIO
+Dùng HAL_GPIO_WritePin(GPIOx, PINx, STATE) để bật/tắt LED
+Kết hợp với UART feedback: trả về "led ON ok\n" hay "led OFF ok\n"
+d) Interrupt-safe logic
+Không ghi buffer nếu ISR chưa xử lý xong → tránh race condition
+state_rx là flag giữ trạng thái để main biết buffer đã sẵn sàng
+error_flag để bỏ qua dữ liệu khi overflow → tránh buffer corruption
+e) Debug và workflow
+Xử lý terminal gửi \r\n → hiểu ISR chỉ quan tâm \r
+Biết cách debug “command bị nhảy” hoặc “overflow”
+Hiểu behavior của HAL UART interrupt: phải gọi lại HAL_UART_Receive_IT mỗi lần nhận xong
+2️⃣ Những điểm cần lưu ý / pitfalls
+Buffer size, để 1 byte cho '\r'
+Buffer quá nhỏ → dễ overflow → luôn set error_flag và discard byte tới \r
+strncmp vs strcmp
+strncmp(buffer,"ON",2) → match nhầm với "ON123"
+Dùng strcmp(buffer,"ON") hoặc strncmp + check \0
+ISR gọi HAL UART nhận lại
+Bắt buộc HAL_UART_Receive_IT(&huart1, &rx_byte, 1) cuối ISR
+Nếu quên → UART không nhận tiếp
+Error handling logic
+Khi overflow → discard tới \r
+Khi gặp unknown command → báo "unknown command\n"
+Nhớ reset tất cả flags sau process
+Timing / blocking
+HAL_UART_Transmit trong process_command() là blocking → nếu truyền dài → main loop chậm
+Nếu muốn nâng cấp → học DMA UART transmit hoặc non-blocking
+Edge cases terminal
+Terminal gửi \r\n → ISR xử lý \r, bỏ qua \n
+Terminal gửi command quá dài → buffer overflow → set error_flag
+3️⃣ 🔹 Các case trong UART cần lưu ý
+Xử lý overflow
+Sử dụng volatile cho các biến dùng chung trong while và interrupt
+Khi buffer đầy mà vẫn nhận byte mới → set error_flag
+Bỏ toàn bộ input đến khi gặp \r để tránh corrupt buffer
+Chặn nhận UART khi chưa xử lý xong
+Sử dụng state flag (state_rx)
+ISR chỉ ghi buffer nếu state_rx == 0 → tránh overwrite khi main loop chưa xử lý
+Xử lý end of command / end of byte (\r)
+Khi nhận \r → đánh dấu kết thúc command → thêm \0 cho buffer
+Cho phép process_command() biết buffer đã sẵn sàng
+Reset index và buffer sau khi xử lý xong
+Sau process_command() → i = 0, state_rx = 0, error_flag = 0
+Sẵn sàng nhận command mới
+Chặn race condition / đồng bộ ISR vs main
+ISR và main loop cùng thao tác buffer → cần flag để tránh race
+Buffer chỉ ghi khi ISR được phép, main loop chỉ đọc khi buffer đã hoàn thiện
+🔹 Mẹo bổ sung
+Buffer nhỏ → luôn kiểm tra overflow, discard đến \r
+Dùng strcmp để so sánh command chính xác
+Với nhiều command dài → cân nhắc circular buffer hoặc queue để nâng cấp lên RTOS
