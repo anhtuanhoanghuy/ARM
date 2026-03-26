@@ -1,0 +1,374 @@
+PROJECT 3 — UART DMA + FreeRTOS + Queue
+🎯 Mục tiêu
+
+Thiết kế hệ thống:
+
+UART RX (DMA) → Buffer → Queue → Task xử lý
+🧠 Bạn sẽ học được
+Tách ISR / DMA / Task
+Giao tiếp giữa context (ISR ↔ Task)
+Queue (FIFO thread-safe)
+Scheduler của FreeRTOS
+Thiết kế hệ thống real-time
+🧩 Kiến trúc bắt buộc
+🔷 Flow chuẩn
+UART RX → DMA → Circular buffer
+                      ↓
+              Producer (ISR / main)
+                      ↓
+                    Queue
+                      ↓
+                Consumer Task
+                      ↓
+                 Xử lý logic
+🔥 Nguyên tắc quan trọng
+ISR / DMA KHÔNG xử lý logic
+→ chỉ push data
+Task mới là nơi xử lý
+📦 Yêu cầu chức năng
+1️⃣ UART RX bằng DMA (reuse Project 2)
+Circular buffer
+head / tail
+không mất byte
+2️⃣ Tạo FreeRTOS
+Bắt buộc:
+1 Queue
+1 Task xử lý data
+3️⃣ Push data vào Queue
+❗ Quan trọng:
+
+Bạn KHÔNG push trong DMA trực tiếp
+→ mà push trong phần đọc buffer
+
+Flow:
+while (tail != head)
+{
+    byte = buffer[tail];
+
+    xQueueSend(queue, &byte, 0);
+
+    tail = (tail + 1) % BUFFER_SIZE;
+}
+4️⃣ Task xử lý data
+Task:
+void ProcessTask(void *argument)
+{
+    uint8_t rx_byte;
+
+    while(1)
+    {
+        if(xQueueReceive(queue, &rx_byte, portMAX_DELAY))
+        {
+            process(rx_byte);
+        }
+    }
+}
+5️⃣ Xử lý logic (stream)
+
+Ví dụ:
+
+ABC123ONOFFXYZ
+
+Bạn phải detect:
+
+chữ
+số
+command ON / OFF
+🧪 Test cases
+✅ Test 1 — Basic
+
+Gửi:
+
+HELLO
+
+→ Task nhận đủ
+
+✅ Test 2 — Continuous stream
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+
+→ không mất byte
+
+✅ Test 3 — High speed
+
+Spam input
+→ hệ thống không crash
+
+✅ Test 4 — Queue full
+
+👉 Cố tình spam nhanh
+
+→ phải xử lý:
+
+drop data
+hoặc log error
+✅ Test 5 — Command parsing
+ONOFFONONOFF
+
+→ detect đúng
+
+⚠️ Các case BẮT BUỘC xử lý
+❗ 1. Queue full
+if(xQueueSend(...) != pdPASS)
+{
+    // queue full
+}
+❗ 2. ISR vs Task
+
+Không được:
+
+process() trong ISR ❌
+❗ 3. Race condition
+
+DMA + Task + Queue
+→ nhiều context chạy song song
+
+❗ 4. Throughput mismatch
+RX nhanh hơn Task xử lý
+→ queue đầy
+🧠 Insight quan trọng
+🔥 1.
+Project 2: xử lý trong main loop
+Project 3: xử lý trong task
+🔥 2.
+DMA = producer
+Task = consumer
+Queue = buffer trung gian
+🔥 3.
+Không bao giờ xử lý logic trong interrupt
+🚀 Tiêu chí hoàn thành
+
+✔ Không mất byte ở tốc độ bình thường
+✔ Queue hoạt động đúng
+✔ Task xử lý độc lập
+✔ Không block hệ thống
+✔ Detect queue overflow
+
+🎯 Gợi ý config
+FreeRTOS:
+Queue size: 64 hoặc 128
+Task stack: ~256–512 words
+Priority: medium
+UART:
+115200 baud
+DMA circular
+🚀 Level tiếp theo sau project này
+👉 Project 4:
+Multiple tasks + Mutex + Event Group
+🎯 Kết luận
+
+Project 3 giúp bạn chuyển từ:
+
+viết code → thiết kế hệ thống
+
+1. Bạn đã học được gì (giá trị thực sự)
+🔹 1.1. Kiến trúc RTOS chuẩn (quan trọng nhất)
+
+Bạn đã implement đúng flow:
+
+ISR → UART_Task → Process_Task → (LED_Task + Log_Task)
+
+👉 Đây là message-driven architecture
+
+Bạn đã hiểu:
+
+tách I/O (UART) khỏi logic (process)
+tách logic khỏi action (LED, log)
+
+👉 Đây chính là cách hệ thống embedded thực tế được thiết kế.
+
+🔹 1.2. ISR không còn “làm việc nặng”
+
+Bạn đã chuyển từ:
+
+ISR xử lý logic
+
+→ sang:
+
+ISR chỉ push data → task xử lý
+
+👉 Bạn đã nắm được nguyên tắc:
+
+ISR = minimal, non-blocking, no logic
+
+🔹 1.3. Queue = xương sống của RTOS
+
+Bạn đã dùng queue cho:
+
+ISR → UART task
+UART → process
+process → LED/log
+
+👉 Hiểu được:
+
+decouple module
+tránh race condition
+event-driven (không polling)
+🔹 1.4. Task priority & scheduling
+
+Bạn đã set:
+
+Task	Priority
+UART	High
+Process	Normal
+LED/Log	Low
+
+👉 Bạn đã hiểu:
+
+task nào cần realtime hơn
+scheduler sẽ ưu tiên ai
+🔹 1.5. Non-blocking I/O (UART IT)
+
+Bạn đang dùng:
+
+HAL_UART_Transmit_IT
+
+👉 Đây là bước đầu của:
+
+async system
+không block CPU
+🔥 2. Những lỗi bạn gặp → bài học quan trọng
+❌ 2.1. Pointer vs value (rất critical)
+(uint8_t*)LED_ON   // sai
+
+👉 Bài học:
+
+Queue luôn cần địa chỉ của data, không phải value
+
+❌ 2.2. Trộn API (CMSIS vs FreeRTOS)
+
+👉 Bài học:
+
+1 project = 1 abstraction layer
+
+❌ 2.3. Polling mindset
+osDelay(1);
+
+👉 Bài học:
+
+RTOS = event-driven, không phải loop + delay
+
+❌ 2.4. Buffer overflow
+index < sizeof(buffer)
+
+👉 Bài học:
+
+luôn chừa chỗ cho \0
+
+❌ 2.5. ISR misuse (trước đó)
+
+Bạn từng:
+
+block trong ISR
+dùng sai API
+
+👉 Bài học:
+
+ISR không:
+
+block
+delay
+xử lý logic
+❌ 2.6. Expression viết “quá thông minh”
+
+👉 Bài học:
+
+Code embedded = rõ ràng > ngắn gọn
+
+⚠️ 3. Những điểm cần đặc biệt lưu ý (level-up)
+🔴 3.1. Race condition
+
+Hiện bạn có:
+
+volatile uint8_t tx_busy_flag;
+
+👉 vẫn có risk:
+
+ISR ghi
+task đọc
+
+👉 sau này cần:
+
+semaphore
+hoặc queue TX
+🔴 3.2. Memory (stack per task)
+
+Bạn đang dùng:
+
+.stack_size = 128 * 4
+
+👉 cần hiểu:
+
+mỗi task có stack riêng
+buffer lớn → dễ stack overflow
+🔴 3.3. Queue overflow
+
+Bạn chưa xử lý:
+
+osMessageQueuePut(...)
+
+👉 nếu queue full → mất data
+
+🔴 3.4. UART TX concurrency
+
+Hiện tại:
+
+Log_task gửi UART
+
+👉 OK
+
+Nhưng nếu sau này:
+
+nhiều task gửi UART
+
+→ sẽ vỡ
+
+🚀 4. Bạn đang ở level nào?
+
+👉 Sau project này:
+
+❌ Không còn junior:
+đã hiểu ISR + RTOS
+biết tách task
+✅ Mid-level (early):
+biết design system
+biết dùng queue đúng cách
+🧠 5. Bạn còn thiếu gì để lên senior?
+🔥 5.1. DMA + streaming (Project 2 upgrade)
+zero-copy
+high throughput
+🔥 5.2. Protocol parser (Project 4)
+state machine
+CRC
+frame sync
+🔥 5.3. Advanced RTOS
+mutex vs semaphore
+task notification
+event group
+🔥 5.4. System thinking
+throughput
+latency
+memory footprint
+🎯 6. Tổng kết cực ngắn
+
+👉 Sau project này bạn đã học:
+
+✔ ISR đúng cách
+✔ Queue communication
+✔ Multi-task architecture
+✔ Event-driven design
+
+👉 Cần nhớ:
+
+❗ Không trộn API
+❗ Không polling
+❗ Không logic trong ISR
+❗ Cẩn thận pointer + buffer
+🔑 Một câu kết luận
+
+👉 Bạn vừa chuyển từ:
+
+viết code chạy được
+
+→
+
+thiết kế hệ thống RTOS đúng chuẩn
